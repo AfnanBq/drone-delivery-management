@@ -1,0 +1,32 @@
+# Core framework
+fastapi
+uvicorn[standard]
+
+# Database (PostgreSQL)
+sqlalchemy>=2.0
+alembic
+psycopg[binary]
+
+# PostGIS / spatial
+geoalchemy2
+shapely
+
+# Settings / env management
+pydantic-settings
+python-dotenv
+
+# Authentication (JWT)
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+pyjwt[crypto]
+
+# Validation
+email-validator
+
+# HTTP client for testing
+httpx
+
+# Testing (recommended)
+pytest
+pytest-asyncio
