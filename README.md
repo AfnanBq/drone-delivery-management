@@ -51,6 +51,268 @@ flowchart LR
     CRUD --> PostgreSQL/PostGIS
 ```
 
+## System Architecture
+
+### Layered Architecture
+
+```mermaid
+graph TB
+    subgraph "API Layer"
+        Auth["🔐 Auth Endpoints<br/>POST /api/v1/auth/token"]
+        UserEP["👤 User Endpoints<br/>POST/GET /api/v1/user/"]
+        OrderEP["📦 Order Endpoints<br/>POST/GET/PATCH /api/v1/order/"]
+        DroneEP["🚁 Drone Endpoints<br/>GET/PATCH /api/v1/drone/"]
+    end
+
+    subgraph "Service Layer"
+        AuthSvc["AuthService<br/>Token generation"]
+        UserSvc["UserService<br/>User management"]
+        OrderSvc["OrderService<br/>Order lifecycle"]
+        DroneSvc["DroneService<br/>Drone management<br/>Handoff logic"]
+    end
+
+    subgraph "CRUD Layer"
+        UserCRUD["user.py<br/>Create/Read ops"]
+        OrderCRUD["order.py<br/>CRUD + PostGIS<br/>nearest_order"]
+        DroneCRUD["drone.py<br/>CRUD + PostGIS<br/>nearest_drone"]
+    end
+
+    subgraph "Data Layer"
+        PG["PostgreSQL<br/>with PostGIS"]
+        Users[("Users<br/>Table")]
+        Drones[("Drones<br/>Table")]
+        Orders[("Orders<br/>Table")]
+    end
+
+    subgraph "Security"
+        JWT["JWT Tokens<br/>Role-based Access"]
+        Roles["Roles:<br/>ADMIN, DRONE, ENDUSER"]
+    end
+
+    Auth --> AuthSvc
+    UserEP --> UserSvc
+    OrderEP --> OrderSvc
+    DroneEP --> DroneSvc
+
+    AuthSvc --> JWT
+    UserSvc --> UserCRUD
+    OrderSvc --> OrderCRUD
+    DroneSvc --> DroneCRUD
+
+    UserCRUD --> PG
+    OrderCRUD --> PG
+    DroneCRUD --> PG
+
+    PG --> Users
+    PG --> Drones
+    PG --> Orders
+
+    JWT --> Roles
+    Roles -.-> UserEP
+    Roles -.-> OrderEP
+    Roles -.-> DroneEP
+
+    style Auth fill:#e1f5ff
+    style UserEP fill:#e1f5ff
+    style OrderEP fill:#e1f5ff
+    style DroneEP fill:#e1f5ff
+    style AuthSvc fill:#fff3e0
+    style UserSvc fill:#fff3e0
+    style OrderSvc fill:#fff3e0
+    style DroneSvc fill:#fff3e0
+    style PG fill:#f3e5f5
+    style JWT fill:#c8e6c9
+```
+
+### Order Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> SUBMITTED: Order Created
+    
+    SUBMITTED --> RESERVED: Drone Reserves<br/>(nearest match found)
+    SUBMITTED --> WITHDRAWN: User Withdraws
+    SUBMITTED --> SUBMITTED: Location Updated
+    
+    RESERVED --> PICKED_UP: Drone Picks Up
+    RESERVED --> WITHDRAWN: User Withdraws
+    RESERVED --> SUBMITTED: Location Updated
+    
+    PICKED_UP --> DELIVERED: Delivery Complete
+    PICKED_UP --> FAILED: Delivery Failed
+    PICKED_UP --> HANDOFF_REQUIRED: Drone Issues<br/>Handoff Request
+    
+    HANDOFF_REQUIRED --> HANDOFF_IN_PROGRESS: Replacement<br/>Drone Found
+    HANDOFF_REQUIRED --> HANDOFF_REQUIRED: Waiting for<br/>Available Drone
+    
+    HANDOFF_IN_PROGRESS --> DELIVERED: Completion
+    HANDOFF_IN_PROGRESS --> FAILED: Failed
+    
+    DELIVERED --> [*]
+    FAILED --> [*]
+    WITHDRAWN --> [*]
+
+    note right of SUBMITTED
+        Ready for assignment
+        Geospatial queries active
+    end note
+
+    note right of RESERVED
+        Drone assigned
+        ETA calculated
+    end note
+
+    note right of PICKED_UP
+        In transit
+        Location updates
+    end note
+
+    note right of HANDOFF_REQUIRED
+        Drone broken
+        Awaiting reassignment
+    end note
+
+    note right of HANDOFF_IN_PROGRESS
+        New drone en route
+        ETA recalculated
+    end note
+```
+
+### Order Reservation Flow (Nearest-Neighbor Matching with PostGIS)
+
+```mermaid
+sequenceDiagram
+    participant Drone as Drone<br/>Client
+    participant OrderAPI as Order API
+    participant OrderSvc as OrderService
+    participant OrderCRUD as OrderCRUD
+    participant DroneCRUD as DroneCRUD
+    participant DB as PostgreSQL<br/>+ PostGIS
+
+    Drone->>OrderAPI: POST /api/v1/order/reserve<br/>(JWT token)
+    OrderAPI->>OrderSvc: reserve_order_service()
+    OrderSvc->>DroneCRUD: get_drone_by_user_id()
+    DroneCRUD->>DB: SELECT Drones<br/>WHERE user_id = ?
+    DB-->>DroneCRUD: Drone object
+    DroneCRUD-->>OrderSvc: Drone (with location)
+    
+    OrderSvc->>OrderSvc: Validate Drone<br/>status = IDLE
+    OrderSvc->>OrderSvc: Convert drone location<br/>to PostGIS POINT
+    
+    OrderSvc->>OrderCRUD: get_nearest_available_order()<br/>(drone WKT location)
+    OrderCRUD->>DB: ST_Distance()<br/>SELECT * FROM Orders<br/>ORDER BY distance LIMIT 1
+    DB-->>OrderCRUD: (Order, distance) tuple
+    OrderCRUD-->>OrderSvc: Order + distance
+    
+    OrderSvc->>OrderSvc: Compute ETA<br/>= now + distance/DRONE_SPEED
+    OrderSvc->>OrderCRUD: update_order()<br/>assigned_drone_id, eta, status=RESERVED
+    OrderCRUD->>DB: UPDATE Orders
+    DB-->>OrderCRUD: OK
+    
+    OrderSvc->>DroneCRUD: update_drone_status(BUSY)
+    DroneCRUD->>DB: UPDATE Drones<br/>status = BUSY
+    DB-->>DroneCRUD: OK
+    
+    OrderSvc-->>OrderAPI: OrderBasic response
+    OrderAPI-->>Drone: 200 OK<br/>order_id, assigned_drone_id, eta
+```
+
+### Drone Handoff Flow (Spatial Reassignment)
+
+```mermaid
+sequenceDiagram
+    participant Drone as Broken Drone<br/>Client
+    participant DroneAPI as Drone API
+    participant DroneSvc as DroneService
+    participant DroneCRUD as DroneCRUD
+    participant OrderCRUD as OrderCRUD
+    participant DB as PostgreSQL<br/>+ PostGIS
+
+    Drone->>DroneAPI: POST /api/v1/drone/me/request-handoff<br/>order_id, location
+    DroneAPI->>DroneSvc: handoff_order_service()
+    
+    DroneSvc->>DroneCRUD: get_drone_by_user_id()
+    DroneCRUD->>DB: SELECT Drones
+    DB-->>DroneCRUD: Current Drone
+    DroneCRUD-->>DroneSvc: Drone object
+    
+    DroneSvc->>DroneSvc: Validate Drone<br/>status = BUSY
+    DroneSvc->>OrderCRUD: get_order_by_id()
+    OrderCRUD->>DB: SELECT Orders
+    DB-->>OrderCRUD: Order object
+    OrderCRUD-->>DroneSvc: Order
+    
+    DroneSvc->>DroneSvc: Validate Order<br/>status = PICKED_UP<br/>assigned_drone_id = current
+    
+    DroneSvc->>DroneCRUD: update_drone()<br/>status=BROKEN, location=handoff_point
+    DroneCRUD->>DB: UPDATE Drones
+    DB-->>DroneCRUD: OK
+    
+    DroneSvc->>DroneCRUD: get_nearest_available_drone()<br/>(handoff location WKT)
+    DroneCRUD->>DB: ST_Distance()<br/>SELECT * FROM Drones<br/>WHERE status=IDLE<br/>ORDER BY distance LIMIT 1
+    DB-->>DroneCRUD: (Drone, distance) tuple
+    DroneCRUD-->>DroneSvc: Replacement Drone + distance
+    
+    alt Replacement found
+        DroneSvc->>OrderCRUD: calculate_distance()<br/>(handoff → destination)
+        OrderCRUD->>DB: ST_DistanceSphere()
+        DB-->>OrderCRUD: remaining_distance
+        
+        DroneSvc->>OrderCRUD: update_order()<br/>status=HANDOFF_IN_PROGRESS<br/>assigned_drone_id=replacement<br/>eta=new_eta
+        OrderCRUD->>DB: UPDATE Orders
+        DB-->>OrderCRUD: OK
+        
+        DroneSvc->>DroneCRUD: update_drone()<br/>drone_id=replacement<br/>status=BUSY
+        DroneCRUD->>DB: UPDATE Drones
+        DB-->>DroneCRUD: OK
+        
+        DroneSvc-->>DroneAPI: Success response
+        DroneAPI-->>Drone: 200 OK<br/>message, order_id<br/>old_drone_id, new_drone_id
+    else No replacement
+        DroneSvc-->>DroneAPI: Partial response
+        DroneAPI-->>Drone: 200 (queue for retry)<br/>message, order_id<br/>old_drone_id, new_drone_id=null
+    end
+```
+
+### Data Model
+
+```mermaid
+erDiagram
+    USERS ||--o{ DRONES : "1 drone per"
+    USERS ||--o{ ORDERS : "submits"
+    DRONES ||--o{ ORDERS : "assigned_to"
+
+    USERS {
+        int id PK
+        string name UK "unique"
+        enum role "ADMIN, DRONE, ENDUSER"
+        datetime created_at
+    }
+
+    DRONES {
+        uuid id PK
+        int user_id FK
+        enum status "IDLE, BUSY, BROKEN"
+        geometry location "PostGIS POINT(lng lat)"
+        datetime last_heartbeat_at
+        datetime created_at
+    }
+
+    ORDERS {
+        uuid id PK
+        int submitted_by_user_id FK
+        uuid assigned_drone_id FK "nullable"
+        enum status "SUBMITTED, RESERVED, PICKED_UP, HANDOFF_REQUIRED, HANDOFF_IN_PROGRESS, DELIVERED, FAILED, WITHDRAWN"
+        geometry origin_location "PostGIS POINT"
+        geometry destination_location "PostGIS POINT"
+        datetime eta "nullable"
+        datetime picked_up_at "nullable"
+        datetime delivered_at "nullable"
+        string failure_reason "nullable"
+        datetime created_at
+    }
+```
+
 ### Important components
 
 - `app/api/endpoints/auth.py`: creates JWT tokens for existing users
