@@ -79,7 +79,7 @@ def update_drone_location_service(db: Session, user_id: int, data: UpdateLocatio
             "location": location_wkt,
             "last_heartbeat_at": datetime.now(timezone.utc),
         }
-        update_drone(db=db, obj_in=obj_in)
+        update_drone(db=db, obj_in=obj_in, drone_id=drone.id)
     except Exception as e:
         logger.error(f"An error occurred while updating the drone status: {e}")
         raise HTTPException(
@@ -95,7 +95,7 @@ def handoff_order_service(
 ):
     logger.info("Starting handoff for user_id=%s with order=%s", user_id, data.order_id)
 
-    drone = get_drone_by_user_id(db=db, drone_id=user_id)
+    drone = get_drone_by_user_id(db=db, user_id=user_id)
 
     if not drone or drone.status != DroneStatus.BUSY:
         raise HTTPException(
@@ -122,7 +122,7 @@ def handoff_order_service(
         update_drone(
             db=db,
             drone_id=drone.id,
-            data={"status": DroneStatus.BROKEN, "location": location_wkt},
+            obj_in={"status": DroneStatus.BROKEN, "location": location_wkt},
         )
 
         logger.info("Updating order to HANDOFF: order_id=%s", order.id)
@@ -133,7 +133,7 @@ def handoff_order_service(
 
         replacement_drone, handoff_distance = get_nearest_available_drone(
             db=db,
-            location=data.location,
+            broken_drone_wkt=location_wkt,
         )
 
         if not replacement_drone:
@@ -170,7 +170,7 @@ def handoff_order_service(
         update_drone(
             db=db,
             drone_id=replacement_drone.id,
-            data={
+            obj_in={
                 "status": DroneStatus.BUSY,
             },
         )

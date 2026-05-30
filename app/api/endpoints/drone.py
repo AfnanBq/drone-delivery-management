@@ -34,13 +34,14 @@ def update_drone_status(
     return MessageResponse(message="Drone status updated successfully")
 
 
-@router.patch("/me/location", response_model=DroneBasic)
+@router.patch("/me/location", response_model=MessageResponse)
 def update_drone_location(
     db: Session = Depends(get_db),
     data: UpdateLocationRequest = Body(...),
     current_user: UserBasic = Depends(require_roles(UserRole.ADMIN, UserRole.DRONE)),
 ):
-    return update_drone_location_service(db=db, user_id=current_user.id, data=data)
+    update_drone_location_service(db=db, user_id=current_user.id, data=data)
+    return MessageResponse(message="Drone location updated successfully")
 
 
 @router.post("/me/request-handoff")

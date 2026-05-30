@@ -103,13 +103,14 @@ def get_nearest_available_order(db: Session, drone_wkt: WKBElement) -> Optional[
 def update_order(db: Session, order_id: UUID, data: dict[str, Any]) -> None:
     try:
         db.execute(update(Orders).where(Orders.id == order_id).values(**data))
+        db.commit()
     except SQLAlchemyError as e:
         db.rollback()
         raise e
 
 
 def calculate_distance(db: Session, point_a: WKBElement, point_b: WKBElement) -> float:
-    stmt = select(func.ST_Distance(func.Geography(point_a), func.Geography(point_b)))
+    stmt = select(func.ST_DistanceSphere(point_a, point_b))
     distance = db.execute(stmt).scalar()
 
     return float(distance)

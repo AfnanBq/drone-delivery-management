@@ -84,9 +84,10 @@ def update_order_status_endpoint(
     db: Session = Depends(get_db),
     current_user: UserBasic = Depends(require_roles(UserRole.DRONE)),
 ) -> MessageResponse:
-    return update_order_status_by_drone_service(
+    update_order_status_by_drone_service(
         db=db,
         order_id=order_id,
         user_id=current_user.id,
         data=data,
     )
+    return MessageResponse(message="Order status updated successfully.")

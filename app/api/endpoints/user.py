@@ -23,6 +23,6 @@ def list_users(
 def create_user(
     user: UserCreate,
     db: Session = Depends(get_db),
-    # current_user: UserBasic = Depends(require_roles(UserRole.ADMIN)),
+    current_user: UserBasic = Depends(require_roles(UserRole.ADMIN)),
 ):
     return create_user_service(db=db, body=user)

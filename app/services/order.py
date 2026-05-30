@@ -268,14 +268,14 @@ def reserve_order_service(db: Session, user_id: int) -> OrderBasic:
     )
 
     # Find nearest available order using PostGIS
-    nearest_order, distance = get_nearest_available_order(db=db, drone_wkt=drone_wkt)
-
-    # No orders found
-    if not nearest_order:
+    nearest_result = get_nearest_available_order(db=db, drone_wkt=drone_wkt)
+    if not nearest_result:
         raise HTTPException(
             status_code=404,
             detail="No available orders found",
         )
+
+    nearest_order, distance = nearest_result
     try:
         # compute eta
         eta = datetime.now(timezone.utc) + timedelta(seconds=distance / DRONE_SPEED)
@@ -286,6 +286,7 @@ def reserve_order_service(db: Session, user_id: int) -> OrderBasic:
             "status": OrderStatus.RESERVED,
         }
         update_order(db=db, order_id=nearest_order.id, data=data)
+        db.refresh(nearest_order)
         # Update drone status
         update_drone_status(db=db, drone_id=drone.id, new_status=DroneStatus.BUSY)
 
@@ -302,16 +303,17 @@ def reserve_order_service(db: Session, user_id: int) -> OrderBasic:
 def update_order_status_by_drone_service(
     db: Session,
     order_id: UUID,
-    drone_id: UUID,
+    user_id: int,
     data: OrderStatusUpdateRequest,
-) -> OrderBasic:
-    logger.info("Updating order=%s status by drone=%s", order_id, drone_id)
+) -> None:
+    logger.info("Updating order=%s status by user=%s", order_id, user_id)
+    drone = get_drone_by_user_id(db=db, user_id=user_id)
     order = get_order_by_id(db, order_id)
     if not order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
 
     # Ensure drone owns order
-    if order.assigned_drone_id != drone_id:
+    if not drone or order.assigned_drone_id != drone.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Drone not assigned to this order",
@@ -335,16 +337,14 @@ def update_order_status_by_drone_service(
         )
     try:
         # Update DB
-        updated_order = update_order_status(
+        update_order_status(
             db=db,
-            order=order,
-            status=new_status,
+            order_id=order.id,
+            new_status=new_status,
             failure_reason=data.failure_reason,
         )
-
-        return OrderBasic.model_validate(updated_order)
     except Exception as e:
-        logger.error(f"Error updating order status by drone {drone_id}: {e}")
+        logger.error(f"Error updating order status by drone {drone.id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while updating the order status",
