@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from app.crud.drone import get_drone_by_user_id, update_drone_status
 from app.crud.order import (create_order, get_active_order_by_drone_id, get_nearest_available_order, get_order_by_id,
                             get_orders, get_orders_by_user_id, update_order, update_order_location, update_order_status,)
-from app.models.orders import Orders
-from app.schemas import OrderBasic, OrderCreate, OrderCreateRequest, OrderLocationUpdate, OrderStatus, OrderStatusUpdateRequest
+from app.schemas import (OrderBasic, OrderCreate, OrderCreateRequest, OrderListResponse, OrderLocationUpdate, OrderStatus,
+                         OrderStatusUpdateRequest,)
 from app.schemas.drone import DroneStatus
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
@@ -75,13 +75,13 @@ def create_order_service(db: Session, body: OrderCreateRequest, user_id: int) ->
             "Converted coordinates to PostGIS points | user_id=%s",
             user_id,
         )
-        # Create ORM object
-        db_obj = Orders(
-            status=order_data.status,
-            submitted_by_user_id=order_data.submitted_by_user_id,
-            origin_location=origin_wkt,
-            destination_location=destination_wkt,
-        )
+        # Create db object
+        db_obj = {
+            "status": order_data.status,
+            "submitted_by_user_id": order_data.submitted_by_user_id,
+            "origin_location": origin_wkt,
+            "destination_location": destination_wkt,
+        }
         order = create_order(db=db, order=db_obj)
         logger.info(
             "Order created successfully | order_id=%s user_id=%s status=%s",
@@ -98,11 +98,11 @@ def create_order_service(db: Session, body: OrderCreateRequest, user_id: int) ->
         )
 
 
-def get_orders_service(db: Session) -> list[OrderBasic]:
+def get_orders_service(db: Session, page: int, size: int) -> list[OrderBasic]:
     try:
         logger.info("Fetching all orders")
-        orders = get_orders(db=db)
-        return [OrderBasic.model_validate(order) for order in orders]
+        result = get_orders(db=db, page=page, size=size)
+        return OrderListResponse(data=result["data"], meta=result["meta"])
     except Exception as e:
         logger.error(f"An error occurred while fetching the orders: {e}")
         raise HTTPException(
@@ -111,14 +111,14 @@ def get_orders_service(db: Session) -> list[OrderBasic]:
         )
 
 
-def get_enduser_orders_service(db: Session, user_id: int) -> list[OrderBasic]:
+def get_enduser_orders_service(db: Session, user_id: int, page: int, size: int) -> list[OrderBasic]:
     try:
         logger.info(
             "Fetching all orders for user=%s",
             user_id,
         )
-        orders = get_orders_by_user_id(db=db, user_id=user_id)
-        return [OrderBasic.model_validate(order) for order in orders]
+        result = get_orders_by_user_id(db=db, user_id=user_id, page=page, size=size)
+        return OrderListResponse(data=result["data"], meta=result["meta"])
     except Exception as e:
         logger.error(f"An error occurred while fetching the orders: {e}")
         raise HTTPException(

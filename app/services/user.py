@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.crud.user import create_user, get_user_by_name_and_role, get_users
-from app.schemas import UserBasic, UserCreate, UserRole
+from app.schemas import UserBasic, UserCreate, UserListResponse, UserRole
 from app.services.drone import create_drone_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
@@ -26,7 +26,8 @@ def create_user_service(body: UserCreate, db: Session) -> UserBasic:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
     try:
         # create the user in the db
-        user = create_user(db=db, data=body)
+        obj_in = {"name": name, "role": role}
+        user = create_user(db=db, data=obj_in)
         logger.info(
             "User created successfully | user_id=%s role=%s",
             user.id,
@@ -49,11 +50,14 @@ def create_user_service(body: UserCreate, db: Session) -> UserBasic:
         )
 
 
-def get_users_service(db: Session) -> list[UserBasic]:
+def get_users_service(db: Session, page: int, size: int) -> UserListResponse:
     logger.info("Fetching all users")
     try:
-        users = get_users(db=db)
-        return [UserBasic.model_validate(user) for user in users]
+        result = get_users(db, page=page, size=size)
+        return UserListResponse(
+            data=result["data"],
+            meta=result["meta"],
+        )
     except Exception as e:
         logger.error(f"An error occurred while fetching the users: {e}")
         raise HTTPException(

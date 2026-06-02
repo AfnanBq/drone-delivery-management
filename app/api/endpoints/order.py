@@ -1,24 +1,25 @@
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.schemas import (MessageResponse, OrderBasic, OrderCreateRequest, OrderLocationUpdate, OrderStatusUpdateRequest,
-                         UserBasic, UserRole,)
+from app.schemas import (MessageResponse, OrderBasic, OrderCreateRequest, OrderListResponse, OrderLocationUpdate,
+                         OrderStatusUpdateRequest, UserBasic, UserRole,)
 from app.services.order import (create_order_service, get_enduser_orders_service, get_orders_service, reserve_order_service,
                                 update_order_locations_service, update_order_status_by_drone_service, withdraw_order_service,)
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[OrderBasic])
+@router.get("/", response_model=OrderListResponse)
 def list_orders(
+    page: int = 1,
+    size: int = 10,
     db: Session = Depends(get_db),
     current_user: UserBasic = Depends(require_roles(UserRole.ADMIN)),
 ):
-    return get_orders_service(db=db)
+    return get_orders_service(db=db, page=page, size=size)
 
 
 @router.patch("/{order_id}/locations")
@@ -47,12 +48,14 @@ def submit_order(
     return create_order_service(db=db, body=order, user_id=current_user.id)
 
 
-@router.get("/my-orders", response_model=List[OrderBasic])
+@router.get("/my-orders", response_model=OrderListResponse)
 def list_my_orders(
+    page: int = 1,
+    size: int = 10,
     db: Session = Depends(get_db),
     current_user: UserBasic = Depends(require_roles(UserRole.ENDUSER)),
 ):
-    return get_enduser_orders_service(db=db, user_id=current_user.id)
+    return get_enduser_orders_service(db=db, user_id=current_user.id, page=page, size=size)
 
 
 @router.patch("/{order_id}/withdraw", response_model=MessageResponse)

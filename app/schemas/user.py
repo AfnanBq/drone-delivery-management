@@ -3,6 +3,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+from .shared import Meta
+
 
 class UserRole(StrEnum):
     ADMIN = "admin"
@@ -33,3 +35,8 @@ class UserToken(BaseModel):
 class UserLogin(BaseModel):
     name: str
     role: UserRole
+
+
+class UserListResponse(BaseModel):
+    data: list[UserBasic]
+    meta: Meta

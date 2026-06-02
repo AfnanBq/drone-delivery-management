@@ -2,15 +2,16 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+# Paginationfrom app.schemas.shared import
 from fastapi import HTTPException, status
 from geoalchemy2.elements import WKTElement
 from sqlalchemy.orm import Session
 
+from app.crud.base import calculate_distance
 from app.crud.drone import (create_drone, get_drone_by_id, get_drone_by_user_id, get_drones, get_nearest_available_drone,
                             update_drone, update_drone_status,)
-from app.crud.order import calculate_distance, get_order_by_id, update_order, update_order_status
-from app.models import Drones
-from app.schemas import DroneBasic, DroneCreate, DroneHandoffRequest, DroneStatus, OrderStatus, UpdateLocationRequest
+from app.crud.order import get_order_by_id, update_order, update_order_status
+from app.schemas import DroneCreate, DroneHandoffRequest, DroneListResponse, DroneStatus, OrderStatus, UpdateLocationRequest
 from app.services.order import DRONE_SPEED
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
@@ -25,7 +26,11 @@ def create_drone_service(db: Session, user_id: int):
     lng, lat = drone_data.location
     # Create PostGIS point
     location_wkt = WKTElement(f"POINT({lng} {lat})", srid=4326)
-    db_obj = Drones(user_id=drone_data.user_id, status=drone_data.status, location=location_wkt)
+    db_obj = {
+        "user_id": drone_data.user_id,
+        "status": drone_data.status,
+        "location": location_wkt,
+    }
     try:
         create_drone(db=db, drone=db_obj)
     except Exception as e:
@@ -36,11 +41,16 @@ def create_drone_service(db: Session, user_id: int):
         )
 
 
-def get_drones_service(db: Session) -> list[DroneBasic]:
+def get_drones_service(db: Session, page: int, size: int) -> DroneListResponse:
     logger.info("Listing all drones for an admin")
     try:
-        drones = [DroneBasic.model_validate(drone) for drone in get_drones(db=db)]
-        return drones
+
+        result = get_drones(db=db, page=page, size=size)
+        return DroneListResponse(
+            data=result["data"],
+            meta=result["meta"],
+        )
+
     except Exception as e:
         logger.error(f"An error occurred while fetching the drones: {e}")
         raise HTTPException(

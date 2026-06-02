@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Optional
@@ -5,6 +6,12 @@ from uuid import UUID
 
 from geoalchemy2.shape import to_shape
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from shapely.wkb import loads as wkb_loads
+
+from .shared import Meta
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 class DroneStatus(StrEnum):
@@ -49,20 +56,25 @@ class DroneBasic(BaseModel):
     @field_validator("location", mode="before")
     @classmethod
     def parse_location(cls, v):
-        # already converted
-        if isinstance(v, list):
-            return {"type": "Point", "coordinates": v}
+        # already serialized
+        if isinstance(v, dict):
+            return v
 
-        # PostGIS WKBElement
+        # PostGIS WKBElement → GeoJSON
         try:
-            point = to_shape(v)  # WKBElement → Shapely Point
-            return {"type": "Point", "coordinates": [point.x, point.y]}
+            if isinstance(v, (str, bytes)):
+                bytes_data = bytes.fromhex(v) if isinstance(v, str) else v
+                point = wkb_loads(bytes_data, hex=isinstance(v, str))
+            else:
+                point = to_shape(v)
+            return {
+                "type": "Point",
+                "coordinates": [point.x, point.y],
+            }
+
         except Exception:
+            logger.error("Failed to parse location WKBElement: %s", v)
             return None
-
-
-class MessageResponse(BaseModel):
-    message: str
 
 
 class UpdateLocationRequest(BaseModel):
@@ -94,3 +106,8 @@ class DroneHandoffResponse(BaseModel):
     order_id: UUID
     old_drone_id: UUID
     new_drone_id: Optional[UUID] = None
+
+
+class DroneListResponse(BaseModel):
+    data: list[DroneBasic]
+    meta: Meta

@@ -1,12 +1,11 @@
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.schemas import (DroneBasic, DroneHandoffRequest, DroneHandoffResponse, DroneStatus, MessageResponse, OrderBasic,
-                         UpdateLocationRequest, UserBasic, UserRole,)
+from app.schemas import (DroneHandoffRequest, DroneHandoffResponse, DroneListResponse, DroneStatus, MessageResponse,
+                         OrderBasic, UpdateLocationRequest, UserBasic, UserRole,)
 from app.services.drone import (get_drones_service, handoff_order_service, update_drone_location_service,
                                 update_drone_status_service,)
 from app.services.order import get_assigned_order_details_service
@@ -14,12 +13,14 @@ from app.services.order import get_assigned_order_details_service
 router = APIRouter()
 
 
-@router.get("/", response_model=List[DroneBasic])
+@router.get("/", response_model=DroneListResponse)
 def list_drones(
     db: Session = Depends(get_db),
+    page: int = 1,
+    size: int = 10,
     current_user: UserBasic = Depends(require_roles(UserRole.ADMIN)),
 ):
-    return get_drones_service(db=db)
+    return get_drones_service(db=db, page=page, size=size)
 
 
 @router.patch("/{drone_id}", response_model=MessageResponse)

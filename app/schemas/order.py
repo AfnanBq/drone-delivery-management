@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal, Optional
@@ -5,6 +6,12 @@ from uuid import UUID
 
 from geoalchemy2.shape import to_shape
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from shapely.wkb import loads as wkb_loads
+
+from .shared import Meta
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 class OrderStatus(StrEnum):
@@ -75,21 +82,24 @@ class OrderBasic(BaseModel):
     )
     @classmethod
     def parse_location(cls, v):
-
         # already serialized
         if isinstance(v, dict):
             return v
 
         # PostGIS WKBElement → GeoJSON
         try:
-            point = to_shape(v)
-
+            if isinstance(v, (str, bytes)):
+                bytes_data = bytes.fromhex(v) if isinstance(v, str) else v
+                point = wkb_loads(bytes_data, hex=isinstance(v, str))
+            else:
+                point = to_shape(v)
             return {
                 "type": "Point",
                 "coordinates": [point.x, point.y],
             }
 
         except Exception:
+            logger.error("Failed to parse location WKBElement: %s", v)
             return None
 
 
@@ -123,3 +133,8 @@ class OrderLocationUpdate(BaseModel):
 class OrderStatusUpdateRequest(BaseModel):
     event: Literal[OrderStatus.PICKED_UP, OrderStatus.DELIVERED, OrderStatus.FAILED]
     failure_reason: Optional[str] = None
+
+
+class OrderListResponse(BaseModel):
+    data: list[OrderBasic]
+    meta: Meta

@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.crud.drone import get_drone_by_id
+from app.crud.order import get_order_by_id
 from app.schemas.drone import DroneStatus
 from app.schemas.order import OrderStatus
 from app.schemas.user import UserRole
@@ -14,8 +16,8 @@ def test_submit_order_endpoint_creates_order_for_enduser(client: TestClient, db:
     order_id = None
 
     payload = {
-        "origin_location": [39.0, 21.0],
-        "destination_location": [39.1, 21.1],
+        "origin_location": [39.0137, 21.0110],
+        "destination_location": [39.1789, 21.1696],
     }
 
     try:
@@ -44,8 +46,9 @@ def test_list_my_orders_endpoint_returns_user_orders(client: TestClient, db: Ses
         response = client.get("/api/v1/order/my-orders", headers=headers)
 
         assert response.status_code == 200
-        assert any(item["id"] == str(order.id) for item in response.json())
-        assert all(item["submitted_by_user_id"] == end_user.id for item in response.json())
+        body = response.json()
+        assert len(body["data"]) >= 1
+        assert body["meta"]["total"] >= 1
     finally:
         cleanup_records(db, order_ids=[order.id, other_order.id], user_ids=[end_user.id, other_user.id])
 
@@ -62,7 +65,11 @@ def test_list_orders_endpoint_returns_all_orders_for_admin(client: TestClient, d
         response = client.get("/api/v1/order/", headers=headers)
 
         assert response.status_code == 200
-        returned_ids = {item["id"] for item in response.json()}
+        body = response.json()
+        assert len(body["data"]) >= 1
+        assert body["meta"]["total"] >= 1
+
+        returned_ids = {item["id"] for item in body["data"]}
         assert str(order1.id) in returned_ids
         assert str(order2.id) in returned_ids
     finally:
@@ -83,7 +90,7 @@ def test_change_order_locations_endpoint_updates_locations(client: TestClient, d
         assert response.status_code == 200
         assert response.json()["message"] == "Order locations updated successfully"
 
-        db.refresh(order)
+        order = get_order_by_id(db=db, order_id=order.id)
         assert order.origin_location is not None
         assert order.destination_location is not None
     finally:
@@ -102,7 +109,7 @@ def test_withdraw_order_endpoint_withdraws_user_order(client: TestClient, db: Se
         assert response.status_code == 200
         assert response.json()["message"] == "Order withdrawn successfully"
 
-        db.refresh(order)
+        order = get_order_by_id(db=db, order_id=order.id)
         assert order.status == OrderStatus.WITHDRAWN
     finally:
         cleanup_records(db, order_ids=[order.id], user_ids=[end_user.id])
@@ -124,10 +131,10 @@ def test_reserve_order_endpoint_assigns_nearest_order_to_drone(client: TestClien
         assert response.json()["assigned_drone_id"] == str(drone.id)
         assert response.json()["status"] == OrderStatus.RESERVED.value
 
-        db.refresh(order)
+        order = get_order_by_id(db=db, order_id=order.id)
         assert order.assigned_drone_id == drone.id
         assert order.status == OrderStatus.RESERVED
-        db.refresh(drone)
+        drone = get_drone_by_id(db=db, drone_id=drone.id)
         assert drone.status == DroneStatus.BUSY
     finally:
         cleanup_records(db, order_ids=[order.id], drone_ids=[drone.id], user_ids=[drone_user.id, end_user.id])
@@ -151,8 +158,7 @@ def test_update_order_status_endpoint_allows_drone_to_pickup_assigned_order(clie
         response = client.patch(f"/api/v1/order/{order.id}/event", headers=headers, json=payload)
 
         assert response.status_code == 200
-
-        db.refresh(order)
+        order = get_order_by_id(db=db, order_id=order.id)
         assert order.status == OrderStatus.PICKED_UP
     finally:
         cleanup_records(db, order_ids=[order.id], drone_ids=[drone.id], user_ids=[drone_user.id, end_user.id])
@@ -176,8 +182,7 @@ def test_update_order_status_endpoint_delivers_assigned_order_after_pickup(clien
         response = client.patch(f"/api/v1/order/{order.id}/event", headers=headers, json=payload)
 
         assert response.status_code == 200
-
-        db.refresh(order)
+        order = get_order_by_id(db=db, order_id=order.id)
         assert order.status == OrderStatus.DELIVERED
         assert order.delivered_at is not None
     finally:

@@ -72,7 +72,10 @@ def test_list_users_endpoint_returns_users_for_admin(client: TestClient, db: Ses
         response = client.get("/api/v1/user/", headers=headers)
 
         assert response.status_code == 200
-        returned_names = {item["name"] for item in response.json()}
+        body = response.json()
+        assert len(body["data"]) >= 1
+        assert body["meta"]["total"] >= 1
+        returned_names = {item["name"] for item in body["data"]}
         assert user1.name in returned_names
         assert user2.name in returned_names
     finally:

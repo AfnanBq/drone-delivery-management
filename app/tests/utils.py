@@ -5,27 +5,27 @@ from geoalchemy2.elements import WKTElement
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.crud.drone import create_drone as create_drone_record
+from app.crud.order import create_order as create_order_record
 from app.crud.user import create_user as create_user_record
 from app.models.drones import Drones
 from app.models.orders import Orders
 from app.models.users import Users
-from app.schemas import DroneStatus, OrderStatus, UserCreate, UserRole
+from app.schemas import DroneStatus, OrderStatus, UserRole
 
 
 def create_user(db: Session, role: UserRole, name: str | None = None) -> Users:
     user_name = name or f"test-{role.value}-{uuid4().hex[:8]}"
-    return create_user_record(db=db, data=UserCreate(name=user_name, role=role))
+    obj_in = {"name": user_name, "role": role}
+    return create_user_record(db=db, data=obj_in)
 
 
 def create_drone(
     db: Session, user_id: int, status: DroneStatus = DroneStatus.IDLE, location: tuple[float, float] = (39.0, 21.0)
 ) -> Drones:
     point = WKTElement(f"POINT({location[0]} {location[1]})", srid=4326)
-    drone = Drones(user_id=user_id, status=status, location=point)
-    db.add(drone)
-    db.commit()
-    db.refresh(drone)
-    return drone
+    drone = {"user_id": user_id, "status": status, "location": point}
+    return create_drone_record(db=db, drone=drone)
 
 
 def create_order(
@@ -38,17 +38,14 @@ def create_order(
 ) -> Orders:
     origin_point = WKTElement(f"POINT({origin[0]} {origin[1]})", srid=4326)
     destination_point = WKTElement(f"POINT({destination[0]} {destination[1]})", srid=4326)
-    order = Orders(
-        status=status,
-        origin_location=origin_point,
-        destination_location=destination_point,
-        assigned_drone_id=assigned_drone_id,
-        submitted_by_user_id=submitted_by_user_id,
-    )
-    db.add(order)
-    db.commit()
-    db.refresh(order)
-    return order
+    order = {
+        "status": status,
+        "origin_location": origin_point,
+        "destination_location": destination_point,
+        "assigned_drone_id": assigned_drone_id,
+        "submitted_by_user_id": submitted_by_user_id,
+    }
+    return create_order_record(db=db, order=order)
 
 
 def get_auth_headers(client: TestClient, name: str, role: UserRole) -> dict[str, str]:

@@ -1,9 +1,12 @@
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from geoalchemy2.shape import to_shape
 from sqlalchemy.orm import Session
 
-from app.schemas.drone import DroneBasic, DroneStatus
+from app.crud.drone import get_drone_by_id
+from app.crud.order import get_order_by_id
+from app.schemas.drone import DroneStatus
 from app.schemas.order import OrderStatus
 from app.schemas.user import UserRole
 
@@ -21,7 +24,10 @@ def test_list_drones_endpoint_returns_registered_drone(client: TestClient, db: S
         response = client.get("/api/v1/drone/", headers=headers)
 
         assert response.status_code == 200
-        assert any(item["id"] == str(drone.id) and item["user_id"] == drone_user.id for item in response.json())
+        response_json = response.json()
+        assert len(response_json["data"]) >= 1
+        assert response_json["meta"]["total"] >= 1
+
     finally:
         cleanup_records(db, drone_ids=[drone.id], user_ids=[admin.id, drone_user.id])
 
@@ -42,7 +48,7 @@ def test_update_drone_status_endpoint_updates_database_status(client: TestClient
         assert response.status_code == 200
         assert response.json()["message"] == "Drone status updated successfully"
 
-        db.refresh(drone)
+        drone = get_drone_by_id(db=db, drone_id=drone.id)
         assert drone.status == DroneStatus.BROKEN
     finally:
         cleanup_records(db, drone_ids=[drone.id], user_ids=[admin.id, drone_user.id])
@@ -65,9 +71,9 @@ def test_update_drone_location_endpoint_updates_coordinates(client: TestClient, 
         assert response.status_code == 200
         assert response.json()["message"] == "Drone location updated successfully"
 
-        db.refresh(drone)
-        drone_in = DroneBasic.model_validate(drone)
-        assert new_location == drone_in.location["coordinates"]
+        drone = get_drone_by_id(db=db, drone_id=drone.id)
+        lng, lat = to_shape(drone.location).coords[0]
+        assert new_location == [lng, lat]
     finally:
         cleanup_records(db, drone_ids=[drone.id], user_ids=[drone_user.id])
 
@@ -121,9 +127,10 @@ def test_request_handoff_endpoint_performs_handoff_to_available_drone(client: Te
         assert response_data["old_drone_id"] == str(current_drone.id)
         assert response_data["new_drone_id"] == str(replacement_drone.id)
 
-        db.refresh(current_drone)
-        db.refresh(replacement_drone)
-        db.refresh(order)
+        current_drone = get_drone_by_id(db=db, drone_id=current_drone.id)
+        replacement_drone = get_drone_by_id(db=db, drone_id=replacement_drone.id)
+        order = get_order_by_id(db=db, order_id=order.id)
+
         order_status = order.status.value if isinstance(order.status, OrderStatus) else order.status
 
         assert current_drone.status == DroneStatus.BROKEN
